@@ -2351,6 +2351,7 @@ def train_segmentation_model(
             shuffle=True,
             num_workers=num_workers,
             pin_memory=True,
+            drop_last=True,  # Drop last incomplete batch to avoid size issues
         )
 
         val_loader = DataLoader(
@@ -2359,6 +2360,7 @@ def train_segmentation_model(
             shuffle=False,
             num_workers=num_workers,
             pin_memory=True,
+            drop_last=False,  # Keep all validation samples
         )
 
         # Test the data loader by loading one batch to catch size mismatch errors early
