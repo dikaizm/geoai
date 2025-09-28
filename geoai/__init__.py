@@ -101,7 +101,8 @@ def set_proj_lib_path(verbose=False):
 
 from .dinov3 import DINOv3GeoProcessor, analyze_image_patches, create_similarity_map
 from .geoai import *
-
+from .losses import *
+from .label_utils import *
 from .timm_train import (
     get_timm_model,
     modify_first_conv_for_channels,
