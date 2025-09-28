@@ -2150,6 +2150,11 @@ def train_segmentation_model(
     target_size: Optional[Tuple[int, int]] = None,
     resize_mode: str = "resize",
     num_workers: Optional[int] = None,
+    criterion: Optional[Any] = None,
+    class_balanced: bool = False,
+    balance_strategy: str = "presence",
+    ignore_index: int = 255,
+    sampler_num_samples: Optional[int] = None,
     **kwargs: Any,
 ) -> torch.nn.Module:
     """
@@ -2194,6 +2199,14 @@ def train_segmentation_model(
             'resize' - Resize images to target_size (may change aspect ratio)
             'pad' - Pad images to target_size (preserves aspect ratio). Defaults to 'resize'.
         num_workers (int): Number of workers for data loading. If None, uses 0 on macOS and Windows, 8 otherwise.
+        criterion: Loss function. If None, uses CrossEntropyLoss. Defaults to None.
+        class_balanced (bool): If True and no external sampler is provided, builds a WeightedRandomSampler
+            that upweights images containing rare classes. Defaults to False.
+        balance_strategy (str): Strategy for computing per-image weights. Currently only 'presence'
+            (average inverse class frequency of classes present in the image). Reserved for future strategies.
+        ignore_index (int): Label value to ignore when computing class frequencies for balancing. Defaults to 255.
+        sampler_num_samples (int, optional): If set and class_balanced=True, number of samples to draw per epoch.
+            Defaults to len(train_dataset) when None.
         **kwargs: Additional arguments passed to smp.create_model().
     Returns:
         None: Model weights are saved to output_dir.
@@ -2344,15 +2357,89 @@ def train_segmentation_model(
     if num_workers is None:
         num_workers = 0 if platform.system() in ["Darwin", "Windows"] else 8
 
-    try:
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=batch_size,
-            shuffle=True,
-            num_workers=num_workers,
-            pin_memory=True,
-            drop_last=True,  # Drop last incomplete batch to avoid size issues
+    # Optional: build a class-balanced sampler
+    if class_balanced:
+        def _build_class_balanced_sampler(label_paths: List[str], num_classes: int, ignore_index: int = 255, strategy: str = "presence"):
+            import numpy as _np
+            import torch as _torch
+            try:
+                import rasterio as _rio
+            except ImportError as _e:  # pragma: no cover
+                raise ImportError("rasterio is required for class-balanced sampling.") from _e
+
+            class_pixel_counts = _np.zeros(num_classes, dtype=_np.int64)
+            per_image_present = []
+
+            for p in label_paths:
+                try:
+                    with _rio.open(p) as src:
+                        m = src.read(1)
+                except Exception:
+                    per_image_present.append([])
+                    continue
+                # Filter ignore + out-of-range
+                m = m[(m != ignore_index) & (m < num_classes)]
+                if m.size == 0:
+                    per_image_present.append([])
+                    continue
+                present = _np.unique(m)
+                per_image_present.append(present)
+                # Strategy currently identical; placeholder for future
+                binc = _np.bincount(m, minlength=num_classes)
+                class_pixel_counts += binc
+
+            safe_counts = class_pixel_counts.copy()
+            safe_counts[safe_counts == 0] = 1  # avoid div-by-zero
+            inv_freq = safe_counts.sum() / safe_counts
+            inv_freq = inv_freq / inv_freq.max()  # normalize 0-1 with max=1
+
+            sample_weights = []
+            for present in per_image_present:
+                if len(present) == 0:
+                    sample_weights.append(0.1)
+                else:
+                    sample_weights.append(float(inv_freq[present].mean()))
+
+            weights_tensor = _torch.tensor(sample_weights, dtype=_torch.float)
+            n_samples = sampler_num_samples if sampler_num_samples is not None else len(weights_tensor)
+            wrs = _torch.utils.data.WeightedRandomSampler(weights_tensor, num_samples=n_samples, replacement=True)
+            return wrs, weights_tensor, class_pixel_counts
+
+        print("Building class-balanced sampler (strategy='presence') ...")
+        sampler, _sample_weights_tensor, _class_pixel_counts = _build_class_balanced_sampler(
+            train_labels, num_classes=num_classes, ignore_index=ignore_index, strategy=balance_strategy
         )
+        # Basic diagnostics
+        try:
+            import numpy as _np
+            non_zero_classes = (_class_pixel_counts > 0).sum()
+            print(f"Class-balanced sampler ready. Non-empty classes: {non_zero_classes}/{num_classes}.")
+        except Exception:
+            pass
+
+    try:
+        train_loader: DataLoader | None = None
+        val_loader: DataLoader | None = None
+
+        if class_balanced:
+            print("Using class balanced sampler")
+            train_loader = DataLoader(
+                train_dataset,
+                batch_size=batch_size,
+                sampler=sampler,        # use custom sampler
+                num_workers=num_workers,
+                pin_memory=True,
+                drop_last=True
+            )
+        else:
+            train_loader = DataLoader(
+                train_dataset,
+                batch_size=batch_size,
+                shuffle=True,           # only if no sampler
+                num_workers=num_workers,
+                pin_memory=True,
+                drop_last=True
+            )
 
         val_loader = DataLoader(
             val_dataset,
@@ -2366,8 +2453,15 @@ def train_segmentation_model(
         # Test the data loader by loading one batch to catch size mismatch errors early
         print("Testing data loader...")
         try:
-            next(iter(train_loader))
+            # Pull one batch – catches size mismatches & bad sampler indices.
+            batch = next(iter(train_loader))
             print("Data loader test passed.")
+        except IndexError as ie:
+            raise IndexError(
+                "Sampler produced an index outside the range of the training dataset. "
+                "Ensure the sampler is constructed AFTER the train/val split and that its indices align "
+                f"with train_dataset length ({len(train_dataset)})."
+            ) from ie
         except RuntimeError as e:
             if "stack expects each tensor to be equal size" in str(e):
                 raise RuntimeError(
@@ -2408,7 +2502,9 @@ def train_segmentation_model(
         model = torch.nn.DataParallel(model)
 
     # Set up loss function (CrossEntropyLoss for multi-class, can also use DiceLoss)
-    criterion = torch.nn.CrossEntropyLoss()
+    if criterion is None:
+        criterion = torch.nn.CrossEntropyLoss()
+    criterion.to(device)
 
     # Set up optimizer
     optimizer = torch.optim.Adam(
