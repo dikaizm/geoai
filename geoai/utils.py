@@ -807,6 +807,72 @@ def view_vector_interactive(
     return m
 
 
+def view_raster_with_labels(
+    raster_image: str,
+    label_raster: str,
+    class_mapping: dict,
+    class_colors: dict,
+    raster_indexes=(1, 2, 3),
+    raster_layer_name="Satellite",
+    label_layer_name="Labels",
+    legend_title="Crop Classes",
+    opacity=0.5,
+    basemap="OpenStreetMap",
+    backend="ipyleaflet",
+):
+    """
+    View raster with crop label overlay and legend in Leafmap.
+
+    Args:
+        raster_image (str): Path to GeoTIFF (multiband).
+        label_raster (str): Path to label raster (remapped classes).
+        class_mapping (dict): {class_id: class_name}.
+        class_colors (dict): {class_id: hex_color}.
+        raster_indexes (tuple): Band indices for RGB display.
+        raster_layer_name (str): Layer name for imagery.
+        label_layer_name (str): Layer name for labels overlay.
+        legend_title (str): Title for the legend.
+        opacity (float): Opacity of the label overlay.
+        basemap (str): Base map to use.
+        backend (str): "ipyleaflet" (default) or "folium".
+    """
+
+    import matplotlib.colors as mcolors
+    import leafmap
+
+    if backend == "folium":
+        import leafmap.foliumap as lm
+    else:
+        import leafmap.leafmap as lm
+
+    m = lm.Map()
+
+    # --- Satellite image (RGB or chosen bands)
+    m.add_raster(
+        source=raster_image,
+        indexes=raster_indexes,
+        layer_name=raster_layer_name,
+        opacity=1.0,
+    )
+
+    # --- Labels raster
+    colors = [class_colors[c] for c in sorted(class_mapping.keys())]
+    cmap = mcolors.ListedColormap(colors)
+
+    m.add_raster(
+        source=label_raster,
+        colormap=cmap,
+        layer_name=label_layer_name,
+        opacity=opacity,
+    )
+
+    # --- Add legend
+    legend_labels = {class_mapping[c]: class_colors[c] for c in sorted(class_mapping.keys())}
+    m.add_legend(title=legend_title, legend_dict=legend_labels)
+
+    return m
+
+
 def regularization(
     building_polygons: Union[gpd.GeoDataFrame, List[Polygon]],
     angle_tolerance: float = 10,
