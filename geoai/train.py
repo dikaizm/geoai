@@ -2762,7 +2762,7 @@ def semantic_inference_on_geotiff(
 
         # Update metadata for output raster
         out_meta = meta.copy()
-        out_meta.update({"count": 1, "dtype": "uint8"})
+        out_meta.update({"count": 1, "dtype": "uint8", "nodata": 255})
 
         # Initialize accumulator arrays for multi-class probability blending
         # We'll accumulate probabilities for each class and then take argmax
