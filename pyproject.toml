@@ -1,6 +1,6 @@
 [project]
 name = "geoai-py"
-version = "0.12.0"
+version = "0.13.0"
 dynamic = [
     "dependencies",
 ]
@@ -36,7 +36,7 @@ exclude = ["docs*"]
 dependencies = {file = ["requirements.txt"]}
 
 [project.optional-dependencies]
-extra = ["overturemaps"]
+extra = ["overturemaps", "torchange"]
 agents = ["strands-agents", "strands-agents-tools", "strands-agents[ollama]", "strands-agents[anthropic]", "strands-agents[openai]"]
 
 [tool.distutils.bdist_wheel]
@@ -44,7 +44,7 @@ universal = true
 
 
 [tool.bumpversion]
-current_version = "0.12.0"
+current_version = "0.13.0"
 commit = true
 tag = true
 
