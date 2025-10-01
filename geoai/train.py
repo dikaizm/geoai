@@ -2155,6 +2155,7 @@ def train_segmentation_model(
     balance_strategy: str = "presence",
     ignore_index: int = 255,
     sampler_num_samples: Optional[int] = None,
+    checkpoint_interval: int = 10,
     **kwargs: Any,
 ) -> torch.nn.Module:
     """
@@ -2619,7 +2620,7 @@ def train_segmentation_model(
             torch.save(model.state_dict(), os.path.join(output_dir, "best_model.pth"))
 
         # Save checkpoint every 10 epochs (if not save_best_only)
-        if not save_best_only and ((epoch + 1) % 10 == 0 or epoch == num_epochs - 1):
+        if not save_best_only and ((epoch + 1) % checkpoint_interval == 0 or epoch == num_epochs - 1):
             torch.save(
                 {
                     "epoch": epoch,
