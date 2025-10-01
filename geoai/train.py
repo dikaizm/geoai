@@ -2640,6 +2640,17 @@ def train_segmentation_model(
                 os.path.join(output_dir, f"checkpoint_epoch_{epoch+1}.pth"),
             )
 
+        if (epoch + 1) % checkpoint_interval == 0:
+            # Save training history
+            history = {
+                "train_losses": train_losses,
+                "val_losses": val_losses,
+                "val_ious": val_ious,
+                "val_dices": val_dices,
+            }
+            torch.save(history, os.path.join(output_dir, "training_history.pth"))
+
+
     # Save final model
     torch.save(model.state_dict(), os.path.join(output_dir, "final_model.pth"))
 
