@@ -2321,6 +2321,11 @@ def evaluate_semantic(
     recall_scores = []
     num_batches = len(data_loader)
 
+    # Accumulate intersections/unions across entire validation set for macro/micro metrics
+    per_class_intersection = torch.zeros(num_classes, dtype=torch.float32, device=device)
+    per_class_union = torch.zeros(num_classes, dtype=torch.float32, device=device)
+    smooth = 1e-6
+
     with torch.no_grad():
         for images, targets in data_loader:
             # Move to device
@@ -3083,7 +3088,7 @@ def semantic_inference_on_geotiff(
         out_meta = meta.copy()
         out_meta.update({"count": 1, "dtype": "uint8", "nodata": 255})
 
-        # Initialize accumulator arrays for multi-class probability blending
+        # Initialize accumulator arrays for mult, "nodata": 255i-class probability blending
         # We'll accumulate probabilities for each class and then take argmax
         prob_accumulator = np.zeros((num_classes, height, width), dtype=np.float32)
         count_accumulator = np.zeros((height, width), dtype=np.float32)
