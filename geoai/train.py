@@ -2945,7 +2945,9 @@ def train_segmentation_model(
                 "train_losses": train_losses,
                 "val_losses": val_losses,
                 "val_ious": val_ious,
+                "val_macro_ious": eval_metrics.get("MacroIoU", []),
                 "val_dices": val_dices,
+                "per_class_ious": eval_metrics.get("PerClassIoU", {}),
             }
             torch.save(history, os.path.join(output_dir, "training_history.pth"))
 
@@ -2980,6 +2982,8 @@ def train_segmentation_model(
         f.write(f"Final validation Precision: {val_precisions[-1]:.4f}\n")
         f.write(f"Final validation Recall: {val_recalls[-1]:.4f}\n")
         f.write(f"Final validation loss: {val_losses[-1]:.4f}\n")
+        f.write(f"Final macro IoU: {eval_metrics.get('MacroIoU', 0):.4f}\n")
+        f.write(f"Final per-class IoU: {eval_metrics.get('PerClassIoU', {})}\n")
 
     print(f"Training complete! Best IoU: {best_iou:.4f}")
     print(f"Models saved to {output_dir}")
