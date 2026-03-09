@@ -2863,6 +2863,130 @@ class SemanticContrastAdjustment:
         return image, mask
 
 
+class RasterPatchDataset(Dataset):
+    """
+    Generate image/mask patch pairs on-the-fly from multi-temporal Sentinel-2
+    rasters and a CDL-style label raster, without pre-chipping files to disk.
+
+    Multiple S2 GeoTIFF files are stacked channel-wise at read time.
+    The CDL label is loaded into memory once to build the valid-patch index cheaply.
+    S2 files are kept open via rasterio and accessed per-patch through windows.
+    Class IDs are remapped to sequential model IDs via a lookup table.
+
+    Args:
+        s2_paths (list[str]): Paths to processed Sentinel-2 GeoTIFF files.
+            Files are stacked in order: file0_band0 … fileN_bandM.
+        cdl_path (str): Path to the label GeoTIFF (single-band, integer class IDs).
+        patch_size (int): Spatial patch size in pixels (square patches).
+        stride (int): Step size between patch origins in pixels.
+            Use patch_size for non-overlapping patches.
+        keep_classes (list[int]): Label class IDs considered valid foreground.
+            Patches are included only if the fraction of pixels belonging to
+            any of these classes is >= min_valid_frac.
+        remap_lut (np.ndarray, optional): 1-D lookup table of shape (256,)
+            mapping raw label IDs to sequential model class IDs (0 = background).
+            If None, raw label IDs are passed through unchanged.
+        min_valid_frac (float): Minimum fraction of patch pixels that must belong
+            to a keep_classes label. Defaults to 0.3.
+        band_indices (list[int], optional): Indices into the stacked channel array
+            to select. If None, all channels are returned.
+        nodata (float): Nodata fill value used in S2 files (default -9999.0).
+            Pixels equal to this value are replaced with 0.0 before normalisation.
+
+    Notes:
+        - num_workers must be 0 in DataLoader because rasterio file handles
+          cannot be pickled for forked worker processes.
+        - Each channel is normalised to [0, 1] using per-channel min-max scaling.
+    """
+
+    def __init__(
+        self,
+        s2_paths: List[str],
+        cdl_path: str,
+        patch_size: int,
+        stride: int,
+        keep_classes: List[int],
+        remap_lut: Optional[np.ndarray] = None,
+        min_valid_frac: float = 0.3,
+        band_indices: Optional[List[int]] = None,
+        nodata: float = -9999.0,
+    ) -> None:
+        self.s2_paths     = s2_paths
+        self.cdl_path     = cdl_path
+        self.patch_size   = patch_size
+        self.band_indices = band_indices
+        self.nodata       = nodata
+        self._remap_lut   = (
+            remap_lut if remap_lut is not None
+            else np.arange(256, dtype=np.int64)
+        )
+
+        # Load CDL into memory once (cheap: single-band int raster)
+        with rasterio.open(cdl_path) as src:
+            self._cdl   = src.read(1).astype(np.int32)
+            self.height = src.height
+            self.width  = src.width
+
+        # Keep S2 sources open for window-based random access
+        self._s2_srcs = [rasterio.open(p) for p in s2_paths]
+
+        # Build valid-patch index
+        keep_set = set(keep_classes)
+        ps = patch_size
+        self.patches: List[Tuple[int, int]] = [
+            (r, c)
+            for r in range(0, self.height - ps + 1, stride)
+            for c in range(0, self.width  - ps + 1, stride)
+            if np.isin(self._cdl[r:r + ps, c:c + ps], list(keep_set)).mean()
+            >= min_valid_frac
+        ]
+        print(
+            f"RasterPatchDataset: {len(self.patches)} valid patches "
+            f"(patch={ps}px, stride={stride}px, min_valid={min_valid_frac})"
+        )
+
+    def __len__(self) -> int:
+        return len(self.patches)
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        r, c = self.patches[idx]
+        ps   = self.patch_size
+        win  = rasterio.windows.Window(c, r, ps, ps)
+
+        # Stack all S2 files along channel axis
+        bands = []
+        for src in self._s2_srcs:
+            arr = src.read(window=win).astype(np.float32)   # (C_i, ps, ps)
+            arr[arr == self.nodata] = 0.0
+            bands.append(arr)
+        img = np.concatenate(bands, axis=0)                 # (total_ch, ps, ps)
+
+        # Optionally select a subset of channels
+        if self.band_indices is not None:
+            img = img[self.band_indices]
+
+        # Per-channel min-max normalisation to [0, 1]
+        for ch in range(img.shape[0]):
+            lo, hi = float(img[ch].min()), float(img[ch].max())
+            if hi > lo:
+                img[ch] = (img[ch] - lo) / (hi - lo)
+            else:
+                img[ch] = 0.0
+
+        # Remap CDL label patch to sequential model IDs via LUT
+        mask_raw = self._cdl[r:r + ps, c:c + ps]                   # (ps, ps)
+        mask     = self._remap_lut[np.clip(mask_raw, 0, 255)]       # (ps, ps)
+
+        return torch.from_numpy(img), torch.from_numpy(mask.astype(np.int64))
+
+    def __del__(self) -> None:
+        for src in getattr(self, "_s2_srcs", []):
+            try:
+                src.close()
+            except Exception:
+                pass
+
+
 def get_semantic_transform(train: bool) -> Any:
     """
     Get transforms for semantic segmentation data augmentation.
