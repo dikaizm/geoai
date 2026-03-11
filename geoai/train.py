@@ -2967,7 +2967,11 @@ class RasterPatchDataset(Dataset):
         # Stack all S2 files along channel axis
         bands = []
         for src in self._s2_srcs:
-            arr = src.read(window=win).astype(np.float32)   # (C_i, ps, ps)
+            try:
+                arr = src.read(window=win).astype(np.float32)   # (C_i, ps, ps)
+            except Exception:
+                # Bad tile (e.g. LZW decode error) — fill with nodata so training continues
+                arr = np.full((src.count, ps, ps), self.nodata, dtype=np.float32)
             arr[arr == self.nodata] = 0.0
             bands.append(arr)
         img = np.concatenate(bands, axis=0)                 # (total_ch, ps, ps)
