@@ -3747,6 +3747,7 @@ def train_segmentation_model(
             shuffle=True,
             num_workers=num_workers,
             pin_memory=True,
+            drop_last=True,
         )
 
         val_loader = DataLoader(
