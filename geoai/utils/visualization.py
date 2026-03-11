@@ -16,7 +16,9 @@ from typing import (
 # Third-Party Libraries
 import geopandas as gpd
 import leafmap
+import matplotlib.patheffects
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 import numpy as np
 import pandas as pd
 import rasterio
@@ -370,18 +372,26 @@ def view_vector(
     scheme: Optional[str] = None,
     save_path: Optional[str] = None,
     dpi: int = 300,
+    raster_path: Optional[str] = None,
+    raster_bands: Optional[Union[int, List[int]]] = None,
+    raster_cmap: str = "gray",
+    outline_only: bool = False,
+    outline_linewidth: float = 1.0,
 ) -> Any:
     """
     Visualize vector datasets with options for styling, classification, basemaps and more.
 
     This function visualizes GeoDataFrame objects with customizable symbology.
     It supports different vector types (points, lines, polygons), attribute-based
-    classification, and background basemaps.
+    classification, background basemaps, and raster backgrounds with polygon
+    outlines overlaid.
 
     Args:
-        vector_data (geopandas.GeoDataFrame): The vector dataset to visualize.
+        vector_data (Union[str, geopandas.GeoDataFrame]): The vector dataset to
+            visualize. Can be a file path or a GeoDataFrame.
         column (str, optional): Column to use for choropleth mapping. If None,
-            a single color will be used. Defaults to None.
+            a single color will be used. Ignored when outline_only is True.
+            Defaults to None.
         cmap (str or matplotlib.colors.Colormap, optional): Colormap to use for
             choropleth mapping. Defaults to "viridis".
         figsize (tuple, optional): Figure size as (width, height) in inches.
@@ -389,9 +399,9 @@ def view_vector(
         title (str, optional): Title for the plot. Defaults to None.
         legend (bool, optional): Whether to display a legend. Defaults to True.
         basemap (bool, optional): Whether to add a web basemap. Requires contextily.
-            Defaults to False.
-        basemap_type (str, optional): Type of basemap to use. Options: 'streets', 'satellite'.
-            Defaults to 'streets'.
+            Ignored when raster_path is provided. Defaults to False.
+        basemap_type (str, optional): Type of basemap to use. Options: 'streets',
+            'satellite'. Defaults to 'streets'.
         alpha (float, optional): Transparency of the vector features, between 0-1.
             Defaults to 0.7.
         edge_color (str, optional): Color for feature edges. Defaults to "black".
@@ -409,6 +419,20 @@ def view_vector(
         save_path (str, optional): Path to save the figure. If None, the figure
             is not saved. Defaults to None.
         dpi (int, optional): DPI for saved figure. Defaults to 300.
+        raster_path (str, optional): Path to a raster file to display as the
+            background. The vector data will be reprojected to match the raster
+            CRS if needed. When provided, the basemap option is ignored.
+            Defaults to None.
+        raster_bands (int or list of int, optional): Band index or list of band
+            indices (1-indexed) to display from the raster. If None, all bands
+            are shown (RGB if 3 bands). Defaults to None.
+        raster_cmap (str, optional): Colormap for single-band raster display.
+            Defaults to "gray".
+        outline_only (bool, optional): If True, polygon features are drawn as
+            outlines only (no fill), allowing the raster background to show
+            through. Has no effect on point or line geometries. Defaults to False.
+        outline_linewidth (float, optional): Line width for polygon outlines when
+            outline_only is True. Defaults to 1.0.
 
     Returns:
         matplotlib.axes.Axes: The Axes object containing the plot.
@@ -420,6 +444,15 @@ def view_vector(
 
         >>> roads = gpd.read_file("roads.shp")
         >>> view_vector(roads, "type", basemap=True, figsize=(12, 8))
+
+        >>> parcels = gpd.read_file("parcels.shp")
+        >>> view_vector(
+        ...     parcels,
+        ...     raster_path="imagery.tif",
+        ...     outline_only=True,
+        ...     edge_color="yellow",
+        ...     outline_linewidth=2,
+        ... )
     """
     import contextily as ctx
 
@@ -436,11 +469,33 @@ def view_vector(
     # Set up figure and axis
     fig, ax = plt.subplots(figsize=figsize)
 
+    # Display raster as background if provided
+    raster_crs = None
+    if raster_path is not None:
+        with rasterio.open(raster_path) as src:
+            raster_crs = src.crs
+            show_kwargs: Dict[str, Any] = {"ax": ax}
+
+            if raster_bands is not None:
+                show_kwargs["indexes"] = raster_bands
+                n_display = 1 if isinstance(raster_bands, int) else len(raster_bands)
+            else:
+                n_display = src.count
+
+            if n_display == 1:
+                show_kwargs["cmap"] = raster_cmap
+
+            show(src, **show_kwargs)
+
+        # Reproject GDF to raster CRS if needed
+        if gdf.crs is not None and raster_crs is not None and gdf.crs != raster_crs:
+            gdf = gdf.to_crs(raster_crs)
+
     # Determine geometry type
     geom_type = gdf.geometry.iloc[0].geom_type
 
     # Plotting parameters
-    plot_kwargs = {"alpha": alpha, "ax": ax}
+    plot_kwargs: Dict[str, Any] = {"alpha": alpha, "ax": ax}
 
     # Set up keyword arguments based on geometry type
     if "Point" in geom_type:
@@ -449,10 +504,15 @@ def view_vector(
     elif "Line" in geom_type:
         plot_kwargs["linewidth"] = 1
     elif "Polygon" in geom_type:
-        plot_kwargs["edgecolor"] = edge_color
+        if outline_only:
+            plot_kwargs["facecolor"] = "none"
+            plot_kwargs["edgecolor"] = edge_color
+            plot_kwargs["linewidth"] = outline_linewidth
+        else:
+            plot_kwargs["edgecolor"] = edge_color
 
-    # Classification options
-    if column is not None:
+    # Classification options (skipped when outline_only is True)
+    if column is not None and not outline_only:
         if scheme is not None:
             # Use mapclassify scheme if provided
             plot_kwargs["scheme"] = scheme
@@ -479,7 +539,7 @@ def view_vector(
             ax=ax, color=highlight_color, edgecolor="black", linewidth=2, zorder=5
         )
 
-    if basemap:
+    if basemap and raster_path is None:
         try:
             basemap_options = {
                 "streets": ctx.providers.OpenStreetMap.Mapnik,
@@ -735,30 +795,75 @@ def display_training_tiles(
     num_tiles=6,
     figsize=(18, 6),
     cmap="gray",
+    show_axes=True,
     save_path=None,
+    image_subdir=None,
+    mask_subdir=None,
 ):
     """
     Display image and mask tile pairs from training data output.
 
     Args:
-        output_dir (str): Path to output directory containing 'images' and 'masks' subdirectories
-        num_tiles (int): Number of tile pairs to display (default: 6)
-        figsize (tuple): Figure size as (width, height) in inches (default: (18, 6))
-        cmap (str): Colormap for mask display (default: 'gray')
-        save_path (str, optional): If provided, save figure to this path instead of displaying
+        output_dir (str): Path to output directory containing image and mask
+            subdirectories.
+        num_tiles (int): Number of tile pairs to display (default: 6).
+        figsize (tuple): Figure size as (width, height) in inches
+            (default: (18, 6)).
+        cmap (str): Colormap for mask display (default: 'gray').
+        show_axes (bool): Whether to show row/column pixel labels on the
+            axes. When True, axes display pixel-based row and column
+            indices instead of CRS coordinates. Defaults to True.
+        save_path (str, optional): If provided, save figure to this path
+            instead of displaying.
+        image_subdir (str, optional): Name of the subdirectory containing
+            image tiles. If None, auto-detects by looking for 'images' or
+            'image' subdirectories. Defaults to None.
+        mask_subdir (str, optional): Name of the subdirectory containing
+            mask/label tiles. If None, auto-detects by looking for 'masks',
+            'mask', 'labels', or 'label' subdirectories. Defaults to None.
 
     Returns:
-        tuple: (fig, axes) matplotlib figure and axes objects
+        tuple: (fig, axes) matplotlib figure and axes objects.
 
     Example:
         >>> fig, axes = display_training_tiles('output/tiles', num_tiles=6)
+        >>> # Show with row/col pixel labels
+        >>> fig, axes = display_training_tiles('output/tiles', show_axes=True)
+        >>> # Use custom subdirectory names
+        >>> fig, axes = display_training_tiles('output/tiles', mask_subdir='labels')
         >>> # Or save to file
         >>> display_training_tiles('output/tiles', num_tiles=4, save_path='tiles_preview.png')
     """
     import matplotlib.pyplot as plt
 
+    # Auto-detect image subdirectory
+    if image_subdir is None:
+        for candidate in ["images", "image"]:
+            if os.path.isdir(os.path.join(output_dir, candidate)):
+                image_subdir = candidate
+                break
+        if image_subdir is None:
+            raise ValueError(
+                f"Could not find image subdirectory in {output_dir}. "
+                "Looked for 'images', 'image'. "
+                "Specify image_subdir explicitly."
+            )
+
+    # Auto-detect mask subdirectory
+    if mask_subdir is None:
+        for candidate in ["masks", "mask", "labels", "label"]:
+            if os.path.isdir(os.path.join(output_dir, candidate)):
+                mask_subdir = candidate
+                break
+        if mask_subdir is None:
+            raise ValueError(
+                f"Could not find mask subdirectory in {output_dir}. "
+                "Looked for 'masks', 'mask', 'labels', 'label'. "
+                "Specify mask_subdir explicitly."
+            )
+
     # Get list of image tiles
-    images_dir = os.path.join(output_dir, "images")
+    images_dir = os.path.join(output_dir, image_subdir)
     if not os.path.exists(images_dir):
         raise ValueError(f"Images directory not found: {images_dir}")
 
@@ -777,17 +882,35 @@ def display_training_tiles(
     if num_tiles == 1:
         axes = axes.reshape(2, 1)
 
+    masks_dir = os.path.join(output_dir, mask_subdir)
+    if not os.path.exists(masks_dir) or not os.path.isdir(masks_dir):
+        raise ValueError(f"Mask directory not found: {masks_dir}")
+
     for idx, tile_name in enumerate(image_tiles):
         # Load and display image tile
-        image_path = os.path.join(output_dir, "images", tile_name)
+        image_path = os.path.join(images_dir, tile_name)
         with rasterio.open(image_path) as src:
-            show(src, ax=axes[0, idx], title=f"Image {idx+1}")
+            if show_axes:
+                data = src.read()
+                if data.shape[0] >= 3:
+                    axes[0, idx].imshow(data[:3].transpose(1, 2, 0))
+                else:
+                    axes[0, idx].imshow(data[0])
+            else:
+                show(src, ax=axes[0, idx])
+        axes[0, idx].set_title(f"Image {idx+1}")
+        if not show_axes:
+            axes[0, idx].set_axis_off()
 
         # Load and display mask tile
-        mask_path = os.path.join(output_dir, "masks", tile_name)
+        mask_path = os.path.join(masks_dir, tile_name)
         if os.path.exists(mask_path):
             with rasterio.open(mask_path) as src:
-                show(src, ax=axes[1, idx], title=f"Mask {idx+1}", cmap=cmap)
+                if show_axes:
+                    data = src.read(1)
+                    axes[1, idx].imshow(data, cmap=cmap)
+                else:
+                    show(src, ax=axes[1, idx], cmap=cmap)
         else:
             axes[1, idx].text(
                 0.5,
@@ -797,7 +920,9 @@ def display_training_tiles(
                 va="center",
                 transform=axes[1, idx].transAxes,
             )
-            axes[1, idx].set_title(f"Mask {idx+1}")
+        axes[1, idx].set_title(f"Mask {idx+1}")
+        if not show_axes:
+            axes[1, idx].set_axis_off()
 
     plt.tight_layout()
 
@@ -904,7 +1029,13 @@ def display_image_with_vector(
 
 
 def create_overview_image(
-    src, tile_coordinates, output_path, tile_size, stride, geojson_path=None
+    src,
+    tile_coordinates,
+    output_path,
+    tile_size,
+    stride,
+    geojson_path=None,
+    in_class_data=None,
 ) -> str:
     """Create an overview image showing all tiles and their status, with optional GeoJSON export.
 
@@ -915,6 +1046,8 @@ def create_overview_image(
         tile_size (int): The size of each tile in pixels.
         stride (int): The stride between tiles in pixels. Controls overlap between adjacent tiles.
         geojson_path (str, optional): If provided, exports the tile rectangles as GeoJSON to this path.
+        in_class_data (str, optional): Path to classification data (vector or raster).
+            If provided, shows the mask/label overlay instead of the raw satellite image.
 
     Returns:
         str: Path to the saved overview image.
@@ -926,30 +1059,103 @@ def create_overview_image(
     overview_width = src.width // overview_scale
     overview_height = src.height // overview_scale
 
-    # Read downsampled image
-    overview_data = src.read(
-        out_shape=(src.count, overview_height, overview_width),
-        resampling=rasterio.enums.Resampling.average,
-    )
+    # Try to load mask data if class data is provided
+    mask_data = None
+    if in_class_data is not None:
+        try:
+            from rasterio.transform import Affine
 
-    # Create RGB image for display
-    if overview_data.shape[0] >= 3:
-        rgb = np.moveaxis(overview_data[:3], 0, -1)
+            file_ext = os.path.splitext(in_class_data)[1].lower()
+            if file_ext in [".tif", ".tiff", ".img", ".jp2", ".png", ".bmp", ".gif"]:
+                # Raster class data: read at overview scale
+                with rasterio.open(in_class_data) as class_src:
+                    mask_data = class_src.read(
+                        1,
+                        out_shape=(overview_height, overview_width),
+                        resampling=rasterio.enums.Resampling.nearest,
+                    )
+            else:
+                # Vector class data: rasterize at overview scale
+                import rasterio.features
+
+                gdf = gpd.read_file(in_class_data)
+                if gdf.crs != src.crs:
+                    gdf = gdf.to_crs(src.crs)
+
+                # Compute overview transform
+                overview_transform = Affine(
+                    src.transform.a * overview_scale,
+                    src.transform.b,
+                    src.transform.c,
+                    src.transform.d,
+                    src.transform.e * overview_scale,
+                    src.transform.f,
+                )
+
+                shapes = [(geom, 1) for geom in gdf.geometry if geom is not None]
+                if shapes:
+                    mask_data = rasterio.features.rasterize(
+                        shapes,
+                        out_shape=(overview_height, overview_width),
+                        transform=overview_transform,
+                        fill=0,
+                        dtype=np.uint8,
+                    )
+        except Exception:
+            mask_data = None
+
+    if mask_data is not None:
+        # Create colored mask image on dark background
+        unique_vals = np.unique(mask_data)
+        unique_vals = unique_vals[unique_vals > 0]
+
+        # Use a colormap for class values
+        cmap = plt.cm.get_cmap("tab10", max(len(unique_vals), 1))
+        rgb = np.zeros((overview_height, overview_width, 3), dtype=np.float64)
+
+        for i, val in enumerate(unique_vals):
+            color = cmap(i % 10)[:3]
+            mask = mask_data == val
+            for c in range(3):
+                rgb[mask, c] = color[c]
     else:
-        # For single band, create grayscale RGB
-        rgb = np.stack([overview_data[0], overview_data[0], overview_data[0]], axis=-1)
+        # Read downsampled image
+        overview_data = src.read(
+            out_shape=(src.count, overview_height, overview_width),
+            resampling=rasterio.enums.Resampling.average,
+        )
 
-    # Normalize for display
-    for i in range(rgb.shape[-1]):
-        band = rgb[..., i]
-        non_zero = band[band > 0]
-        if len(non_zero) > 0:
-            p2, p98 = np.percentile(non_zero, (2, 98))
-            rgb[..., i] = np.clip((band - p2) / (p98 - p2), 0, 1)
+        # Create RGB image for display
+        if overview_data.shape[0] >= 3:
+            rgb = np.moveaxis(overview_data[:3], 0, -1)
+        else:
+            # For single band, create grayscale RGB
+            rgb = np.stack(
+                [overview_data[0], overview_data[0], overview_data[0]], axis=-1
+            )
 
-    # Create figure
-    plt.figure(figsize=(12, 12))
-    plt.imshow(rgb)
+        # Normalize for display
+        for i in range(rgb.shape[-1]):
+            band = rgb[..., i]
+            non_zero = band[band > 0]
+            if len(non_zero) > 0:
+                p2, p98 = np.percentile(non_zero, (2, 98))
+                rgb[..., i] = np.clip((band - p2) / (p98 - p2), 0, 1)
+
+        # Apply gamma correction to brighten dark imagery
+        rgb = np.clip(np.power(rgb, 0.7), 0, 1)
+
+    # Create figure with aspect-ratio-aware sizing
+    max_fig_dim = 12
+    aspect = overview_width / overview_height
+    if aspect >= 1:
+        fig_width = max_fig_dim
+        fig_height = max_fig_dim / aspect
+    else:
+        fig_height = max_fig_dim
+        fig_width = max_fig_dim * aspect
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    ax.imshow(rgb)
 
     # If GeoJSON export is requested, prepare GeoJSON structures
     if geojson_path:
@@ -965,23 +1171,39 @@ def create_overview_image(
         width = int(tile_size / overview_scale)
         height = int(tile_size / overview_scale)
 
-        # Draw rectangle
-        color = "lime" if tile["has_features"] else "red"
+        # Draw rectangle with semi-transparent fill
+        if tile["has_features"]:
+            edgecolor = "lime"
+            facecolor = (0.0, 1.0, 0.0, 0.15)
+        else:
+            edgecolor = "red"
+            facecolor = (1.0, 0.0, 0.0, 0.25)
+
         rect = plt.Rectangle(
-            (x_min, y_min), width, height, fill=False, edgecolor=color, linewidth=0.5
+            (x_min, y_min),
+            width,
+            height,
+            fill=True,
+            facecolor=facecolor,
+            edgecolor=edgecolor,
+            linewidth=1.5,
         )
-        plt.gca().add_patch(rect)
+        ax.add_patch(rect)
 
         # Add tile number if not too crowded
         if width > 20 and height > 20:
-            plt.text(
+            ax.text(
                 x_min + width / 2,
                 y_min + height / 2,
                 str(tile["index"]),
                 color="white",
                 ha="center",
                 va="center",
-                fontsize=8,
+                fontsize=10,
+                fontweight="bold",
+                path_effects=[
+                    matplotlib.patheffects.withStroke(linewidth=2, foreground="black")
+                ],
             )
 
         # Add to GeoJSON features if exporting
@@ -1021,11 +1243,35 @@ def create_overview_image(
 
             features.append(feature)
 
-    plt.title("Tile Overview (Green = Contains Features, Red = Empty)")
-    plt.axis("off")
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close()
+    ax.set_title("Tile Overview", fontsize=14, fontweight="bold", pad=10)
+    ax.axis("off")
+
+    # Add legend
+    legend_handles = [
+        Patch(
+            facecolor=(0.0, 1.0, 0.0, 0.3),
+            edgecolor="lime",
+            linewidth=1.5,
+            label="Contains features",
+        ),
+        Patch(
+            facecolor=(1.0, 0.0, 0.0, 0.4),
+            edgecolor="red",
+            linewidth=1.5,
+            label="Empty",
+        ),
+    ]
+    ax.legend(
+        handles=legend_handles,
+        loc="upper right",
+        fontsize=10,
+        framealpha=0.8,
+        edgecolor="gray",
+    )
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
 
     print(f"Overview image saved to {output_path}")
 

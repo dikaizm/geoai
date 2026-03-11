@@ -8,7 +8,7 @@ only when a specific symbol is first accessed.
 
 __author__ = """Qiusheng Wu"""
 __email__ = "giswqs@gmail.com"
-__version__ = "0.31.1"
+__version__ = "0.33.0"
 
 
 import importlib
@@ -165,6 +165,13 @@ _LAZY_SYMBOL_MAP = {
     "get_model_input_channels": ("hf", None),
     "image_segmentation": ("hf", None),
     "mask_generation": ("hf", None),
+    # --- geoai.inference ---
+    "BlendMode": ("inference", None),
+    "create_weight_mask": ("inference", None),
+    "predict_geotiff": ("inference", None),
+    "d4_forward": ("inference", None),
+    "d4_inverse": ("inference", None),
+    "d4_tta_forward": ("inference", None),
     # --- geoai.segment ---
     "BoundingBox": ("segment", None),
     "DetectionResult": ("segment", None),
@@ -261,6 +268,7 @@ _LAZY_SYMBOL_MAP = {
     "calc_f1_score": ("utils", None),
     # --- geoai.landcover_utils ---
     "export_landcover_tiles": ("landcover_utils", None),
+    "normalize_radiometric": ("landcover_utils", None),
     # --- geoai.landcover_train ---
     "FocalLoss": ("landcover_train", None),
     "LandcoverCrossEntropyLoss": ("landcover_train", None),
@@ -387,6 +395,14 @@ _LAZY_SYMBOL_MAP = {
     # --- geoai.water ---
     "segment_water": ("water", None),
     "BAND_ORDER_PRESETS": ("water", None),
+    # --- geoai.clip_classify ---
+    "CLIPVectorClassifier": ("clip_classify", None),
+    "clip_classify_vector": ("clip_classify", None),
+    # --- geoai.dinov3_finetune ---
+    "DINOv3Segmenter": ("dinov3_finetune", None),
+    "DINOv3SegmentationDataset": ("dinov3_finetune", None),
+    "train_dinov3_segmentation": ("dinov3_finetune", None),
+    "dinov3_segment_geotiff": ("dinov3_finetune", None),
 }
 
 # Submodules that can be imported via `from geoai import <submodule>`
@@ -395,14 +411,17 @@ _LAZY_SUBMODULES = {
     "tools",
     "utils",
     "classify",
+    "clip_classify",
     "download",
     "extract",
     "hf",
+    "inference",
     "segment",
     "train",
     "agents",
     "landcover_utils",
     "landcover_train",
+    "dinov3_finetune",
 }
 
 

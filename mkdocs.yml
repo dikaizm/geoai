@@ -78,6 +78,8 @@ plugins:
                   "examples/moondream_sliding_window.ipynb",
                   "examples/torchgeo_embeddings.ipynb",
                   "examples/image_recognition.ipynb",
+                  "examples/clip_classify_vector.ipynb",
+                  "examples/impervious_surface_mapping.ipynb",
                   "workshops/GeoAI_Workshop_2025.ipynb",
               ]
 
@@ -165,6 +167,7 @@ nav:
           - examples/DINOv3.ipynb
           - examples/DINOv3_visualization.ipynb
           - examples/DINOv3_wetlands.ipynb
+          - examples/dinov3_finetune_segmentation.ipynb
           - examples/AlphaEarth.ipynb
           - examples/AI_agents.ipynb
           - examples/STAC_agents.ipynb
@@ -185,10 +188,13 @@ nav:
           - examples/prithvi.ipynb
           - examples/train_timm_regressor.ipynb
           - examples/canopy_height.ipynb
+          - examples/smooth_inference.ipynb
           - examples/tessera.ipynb
           - examples/torchgeo_embeddings.ipynb
           - examples/google_satellite_embedding.ipynb
           - examples/building_detection_whu.ipynb
+          - examples/clip_classify_vector.ipynb
+          - examples/impervious_surface_mapping.ipynb
     - Workshops:
           - workshops/GeoAI_Workshop_2025.ipynb
           - workshops/AWS_2025.ipynb
@@ -209,6 +215,7 @@ nav:
           - embeddings module: embeddings.md
           - extract module: extract.md
           - hf module: hf.md
+          - inference module: inference.md
           - landcover_train module: landcover_train.md
           - landcover_utils module: landcover_utils.md
           - object_detect module: object_detect.md
