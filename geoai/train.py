@@ -3374,12 +3374,16 @@ def train_semantic_one_epoch(
         images = images.to(device)
         targets = targets.to(device)
 
+        # Sanitize inputs before forward pass — prevents BatchNorm running stats
+        # from being permanently corrupted by any residual NaN/inf in the data
+        # (e.g. cloud-masked winter S2 pixels not caught by nodata assignment)
+        images = torch.nan_to_num(images, nan=0.0, posinf=1.0, neginf=0.0)
+
         # Forward pass
         outputs = model(images)
         loss = criterion(outputs, targets)
 
-        # Skip batch if loss is NaN (e.g. from residual bad pixels) to avoid
-        # corrupting model weights irreversibly
+        # Skip batch if loss is still NaN/inf after sanitized inputs
         if not torch.isfinite(loss):
             optimizer.zero_grad()
             continue
