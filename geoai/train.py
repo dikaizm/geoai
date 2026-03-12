@@ -2973,6 +2973,7 @@ class RasterPatchDataset(Dataset):
                 # Bad tile (e.g. LZW decode error) — fill with nodata so training continues
                 arr = np.full((src.count, ps, ps), self.nodata, dtype=np.float32)
             arr[arr == self.nodata] = 0.0
+            arr[~np.isfinite(arr)] = 0.0   # catch any residual NaN/inf from cloud masking
             bands.append(arr)
         img = np.concatenate(bands, axis=0)                 # (total_ch, ps, ps)
 
@@ -3376,6 +3377,12 @@ def train_semantic_one_epoch(
         # Forward pass
         outputs = model(images)
         loss = criterion(outputs, targets)
+
+        # Skip batch if loss is NaN (e.g. from residual bad pixels) to avoid
+        # corrupting model weights irreversibly
+        if not torch.isfinite(loss):
+            optimizer.zero_grad()
+            continue
 
         # Backward pass
         optimizer.zero_grad()
